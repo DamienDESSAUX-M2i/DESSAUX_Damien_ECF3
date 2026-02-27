@@ -76,24 +76,6 @@ services:
     networks:
       - spark-network
 
-  jupyter:
-    image: jupyter/pyspark-notebook:latest
-    container_name: spark-jupyter
-    environment:
-      - JUPYTER_ENABLE_LAB=yes
-      - SPARK_MASTER=spark://spark-master:7077
-    ports:
-      - "8888:8888"
-    volumes:
-      - ./notebooks:/home/ecf3/notebooks
-      - ./data:/home/ecf3/data
-      - ./output:/home/ecf3/output
-      - ./logs:/logs
-    depends_on:
-      - spark-master
-    networks:
-      - spark-network
-
 networks:
   spark-network:
     driver: bridge
