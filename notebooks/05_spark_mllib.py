@@ -22,10 +22,18 @@ from pyspark.ml.feature import (
     StringIndexer,
     VectorAssembler,
 )
-from pyspark.sql import SparkSession
+from pyspark.sql import DataFrame, SparkSession
 
-SAVE_MODEL_PATH = "/output/models/logistic_regression"
-MODEL_COMPARISON_PATH = "/output/metrics/model_comparison_spark.csv"
+LOGS_DIR = Path("/logs")
+OUTPUT_DIR = Path("/output")
+MODELS_DIR = OUTPUT_DIR / "models"
+SAVE_MODEL_PATH = MODELS_DIR / "logistic_regression"
+METRICS_PATH = OUTPUT_DIR / "metrics"
+MODEL_COMPARISONS_PATH = METRICS_PATH / "model_comparison_spark.csv"
+
+# ensure directories exist
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
+METRICS_PATH.mkdir(parents=True, exist_ok=True)
 
 # ===
 # Logging
@@ -72,6 +80,34 @@ def set_up_logger(
     return logger
 
 
+def log_section(title: str) -> None:
+    """Log a formatted section header.
+
+    Args:
+        title (str): Section title to display in logs.
+    """
+    logger.info("=" * 64)
+    logger.info(title)
+    logger.info("=" * 64)
+
+
+def df_show_to_string(
+    df: DataFrame, n: int = 10, truncate_int: int = 0, vertical: bool = False
+) -> str:
+    """Capture the output of df.show() as a string.
+
+    Args:
+        df (DataFrame): Spark DataFrame.
+        n (int, optional): Number of rows to display. Defaults to 10.
+        truncate (bool, optional): Max column width (False = no truncation). Defaults to 0.
+        vertical (bool, optional): Vertical display mode. Defaults to False.
+
+    Returns:
+        str: String representation of df.show().
+    """
+    return "\n" + df._jdf.showString(n, truncate_int, vertical)
+
+
 logger = set_up_logger(
     name="05_spark_mllib", logger_file_path="/logs/05_spark_mllib.log"
 )
@@ -108,49 +144,39 @@ logger.info("Data loaded")
 
 df = df.withColumn("Churn_num", F.when(F.col("Churn") == "Yes", 1).otherwise(0))
 
-logger.info("Add column 'Churn_num'")
+logger.info("Column 'Churn_num' added")
 
 # ===
 # DataFrame analysis
 # ===
 
-print(f"\n{'=' * 64}")
-print("Schema:")
-print(f"{'=' * 64}")
-df.printSchema()
+log_section("Schema")
+logger.info("\n" + df._jdf.schema().treeString())
 
-print(f"\n{'=' * 64}")
-print("First 5 lines:")
-print(f"{'=' * 64}")
-df.show(5)
+log_section("First 5 lines:")
+logger.info(df_show_to_string(df, n=5))
 
-print(f"\n{'=' * 64}")
-print("Dimensions:")
-print(f"{'=' * 64}")
+log_section("Dimensions:")
 size_df = df.count()
-print("Total number of lines: ", size_df)
-print("Total number of columns: ", len(df.columns))
+nb_columns = len(df.columns)
+logger.info(f"Total number of lines: {size_df}")
+logger.info(f"Total number of columns: {nb_columns}")
 
-print(f"\n{'=' * 64}")
-print("Statistics:")
-print(f"{'=' * 64}")
-df.describe().show()
+log_section("Statistics:")
+logger.info(df_show_to_string(df.describe()))
 
-print(f"\n{'=' * 64}")
-print("Number of null per column:")
-print(f"{'=' * 64}")
-df.select(
+log_section("Number of null per column:")
+null_df = df.select(
     [F.sum(F.when(F.col(c).isNull(), 1).otherwise(0)).alias(c) for c in df.columns]
-).show()
+)
+logger.info(df_show_to_string(null_df))
 
 # ===
 # Target Analysis
 # ===
 
-print(f"\n{'=' * 64}")
-print("Distribution 'Churn':")
-print(f"{'=' * 64}")
-df.groupBy("Churn").count().show()
+log_section("Distribution 'Churn':")
+logger.info(df_show_to_string(df.groupBy("Churn").count()))
 
 # ===
 # Preprocessing Pipeline
@@ -327,9 +353,7 @@ models = {
 # Split train / test
 # ===
 
-print(f"\n{'=' * 64}")
-print("Split train / test:")
-print(f"{'=' * 64}")
+log_section("Split train / test:")
 train_df, test_df = df.randomSplit(weights=[0.7, 0.3], seed=42)
 
 total_count_train = train_df.count()
@@ -350,19 +374,18 @@ churn_distribution_test = (
     )
 )
 
-print("Churn distribution train set:")
-churn_distribution_train.show()
+logger.info("Churn distribution train set:")
+logger.info(df_show_to_string(churn_distribution_train))
 
-print("\nChurn distribution test set:")
-churn_distribution_test.show()
+logger.info("Churn distribution test set:")
+logger.info(df_show_to_string(churn_distribution_test))
 
 # ===
 # Fitting and evaluate models
 # ===
 
-print(f"\n{'=' * 64}")
-print("Metrics:")
-print(f"{'=' * 64}")
+log_section("Fitting and evaluate models:")
+
 evaluator_accuracy = MulticlassClassificationEvaluator(
     labelCol="Churn_num",
     predictionCol="prediction",
@@ -388,11 +411,14 @@ evaluator_recall = MulticlassClassificationEvaluator(
 )
 
 metrics = []
+fitted_models = {}
 
 for name, model in models.items():
     t0 = time.time()
     model_fit = model.fit(train_df)
     t1 = time.time()
+
+    fitted_models[name] = model_fit
 
     logger.info(f"Model {name} fit: time={t1 - t0}s")
 
@@ -438,66 +464,51 @@ for name, model in models.items():
 
     logger.info(f"Model {name} evaluate: time={t3 - t2}s")
 
-print(
-    f"{'Model':<30} | {'Accuracy':<10} | {'Precision Yes':<10} | {'Recall Yes':<10} | {'F1 Yes':<10} | {'Time':<10}"
-)
-for metric in metrics:
-    print(
-        f"{metric['Model']:<30} | {metric['Accuracy']:<10.6f} | {metric['Precision Yes']:<10.6f} | {metric['Recall Yes']:<10.6f} | {metric['F1 Yes']:<10.6f} | {metric['Time']:<10.6f}"
-    )
+metrics_df = pd.DataFrame(metrics).sort_values("Recall Yes", ascending=False)
+logger.info("\n" + metrics_df.to_string(index=False))
 
-metrics_df = pd.DataFrame(metrics)
-best_model_name = metrics_df.sort_values("Recall Yes").loc[0, "Model"]
-print(f"--> Best Model: {best_model_name}")
+best_model_name = metrics_df.iloc[0]["Model"]
+logger.info(f"--> Best Model: {best_model_name}")
 
-best_model = models[best_model_name]
-print(type(best_model))
+best_model = fitted_models[best_model_name]
 
 # ===
 # Feature importance
 # ===
 
-print(f"\n{'=' * 64}")
-print("Feature importance:")
-print(f"{'=' * 64}")
-# df_before_scaling = train_df
-# for stage in best_model.stages[:-2]:
-#     df_before_scaling = stage.transform(df_before_scaling)
-# attrs = df_before_scaling.schema["features"].metadata["ml_attr"]["attrs"]
+log_section("Feature importance:")
+df_before_scaling = train_df
+for stage in best_model.stages[:-2]:
+    df_before_scaling = stage.transform(df_before_scaling)
+attrs = df_before_scaling.schema["features"].metadata["ml_attr"]["attrs"]
 
-# feature_names = [attr["name"] for attr_type in attrs for attr in attrs[attr_type]]
+feature_names = [attr["name"] for attr_type in attrs for attr in attrs[attr_type]]
 
-# clf_model = best_model.stages[-1]
-# importances = clf_model.featureImportances.toArray()
+clf_model = best_model.stages[-1]
+importances = clf_model.featureImportances.toArray()
 
-# fi_pairs = sorted(zip(feature_names, importances), key=lambda x: -x[1])
+fi_pairs = sorted(zip(feature_names, importances), key=lambda x: -x[1])
 
-# print("Top 10 feature importance RandomForestClassifier:")
-# print(f"{'feature':<30} | {'importance':<10} | {'bar'}")
-# for fname, importance in fi_pairs[:10]:
-#     bar = "▮" * int(importance * 100)
-#     print(f"{fname:<30} | {importance:<10.2f} | {bar}")
+lines = []
+lines.append("Top 10 feature importance RandomForestClassifier:")
+lines.append(f"{'Feature':<50} | {'Importance':<10} |")
+for fname, importance in fi_pairs[:10]:
+    bar = "▮" * int(importance * 100)
+    lines.append(f"{fname:<50} | {importance:<10.2f} | {bar}")
+
+logger.info("\n" + "\n".join(lines))
 
 # ===
 # Save
 # ===
 
-print(f"\n{'=' * 64}")
-print("Save pipelines:")
-print(f"{'=' * 64}")
-best_model.write().overwrite().save(SAVE_MODEL_PATH)
-print("Model path: ", SAVE_MODEL_PATH)
+log_section("Save pipelines:")
+best_model.write().overwrite().save(SAVE_MODEL_PATH.as_posix())
+logger.info(f"Model, path={SAVE_MODEL_PATH.as_posix()}")
 
-print(f"\n{'=' * 64}")
-print("Save Spark results:")
-print(f"{'=' * 64}")
-metrics_df.to_csv(MODEL_COMPARISON_PATH)
-# data = {}
-# data.update(results_reg)
-# data.update(results_clf)
-# json_path = EXOS_PATH / "spark_results.json"
-# json_path.write_text(data=json.dumps(data), encoding="utf-8")
-# print("Spark results path: ", json_path)
+log_section("Save Spark results:")
+metrics_df.to_csv(MODEL_COMPARISONS_PATH.as_posix())
+logger.info(f"Model comparisons, path={MODEL_COMPARISONS_PATH.as_posix()}")
 
 
 spark.stop()
