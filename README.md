@@ -23,9 +23,10 @@ L'objectif du projet est de construire un modèle prédictif pour identifier les
 L'étude suivra les étapes suivantes :
 1. Analyse exploratoire des données (EDA)
 2. Prétraitement & Feature Engineering
-3. Comparaisons de modèles
+3. Comparaisons et évaluations de modèles
 4. Optimisation du meilleur modèle
 5. Implémentation distribuée avec Spark MLlib
+6. Comparaison Scikit-Learn et Spark MLlib
 
 # 3. Structure du projet
 
@@ -39,9 +40,11 @@ DESSAUX_DAMIEN_ECF3/
 ├── requirements.txt            # Dépendances Python
 │
 ├── data/
-│   └── 03_DONNEES.csv          # Dataset utilisé pour l'analyse
+│   ├── 03_DONNEES.csv          # Dataset utilisé pour l'analyse
+│   └── enriched_dataset.csv    # Dataset enrichie lors de la phase de feature engineering
 │
 ├── docs/
+│   ├── rapport.md              # Bilan (résumé, méthodologie, résultats et recommandations)
 │   └── SUJET_ECF3.md           # Sujet du projet
 │
 ├── logs/
@@ -49,27 +52,20 @@ DESSAUX_DAMIEN_ECF3/
 │
 ├── notebooks/
 │   ├── 01_EDA.ipynb            # Analyse exploratoire des données
-│   ├── 02_preprocessing.ipynb  # Preprocessing
-│   ├── 03_modelisation.ipynb   # Comparaisons des modèles
+│   ├── 02_preprocessing.ipynb  # Génération des pipelines de prétraitement
+│   ├── 03_modelisation.ipynb   # Comparaisons et évaluations de modèles
 │   ├── 04_optimisation.ipynb   # Optimisation du meilleur modèle
-│   └── 05_spark_mllib.py       # Implémentation Spark MLlib
+│   ├── 05_spark_mllib.py       # Implémentation Spark MLlib
+│   └── 06_scikit_learn_spark_comparison.ipynb  # Comparaison
 │
 └── output/
     ├── figures/                # Visualisations générées
-    │   ├── 01_churn_distribution.png
-    │   ├── 03_confusion_matrix.png
-    │   ├── 03_feature_importance.png
-    │   └── 04_learning_curve.png
     │
     ├── metrics/                # Métriques calculées
-    │   ├── cross_validation.csv
-    │   ├── model_comparisons.csv
-    │   └── model_comparison_spark.csv
     │
-    └── models/                 # Modèles entraînés
-        ├── logistic_regression.pkl
-        ├── preprocessor.pkl
-        └── logistic_regression/  # Modèle exporté au format Spark
+    ├── models/                 # Pipelines de prétraitement et Modèles entraînés
+    │
+    └── predictions_test.csv    # Résultats de prédiction
 ```
 
 # 4. Prérequis
@@ -105,6 +101,8 @@ pip install -r requirements.txt
 Vous pouvez également utilisez `uv` avec la commande `uv sync`.
 
 ## 5.3. Démarrer l'infrastructure Docker.
+
+Avant de démarrer l'infrastructure, veillez à ce que les dossier `notebooks`, `data`, `output` et `logs` soient créés.
 
 Quatre services seront lancés `spark-master`, `spark-worker-1`, `spark-worker-2` et `spark-worker-3`.
 Ces services sont construis à partir du fichier `DorkerFile` qui ajoute à l'image `apache/spark:3.5.3` les bibliothèques `pandas` et `numpy`.
