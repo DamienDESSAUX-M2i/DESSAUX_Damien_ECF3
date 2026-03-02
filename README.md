@@ -95,7 +95,7 @@ DESSAUX_DAMIEN_ECF3/
 │   └── 06_scikit_learn_spark_comparison.ipynb  # Comparaison Scikit-Learn et Spark MLlib
 │
 └── output/
-    ├── figures/                # Visualisations générées
+    ├── figures/                # Visualisations générées (Accessibilité daltonisme et dyslexie)
     │
     ├── metrics/                # Métriques calculées
     │
