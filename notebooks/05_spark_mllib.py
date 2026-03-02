@@ -23,6 +23,7 @@ from pyspark.ml.feature import (
     VectorAssembler,
 )
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql.types import FloatType
 
 LOGS_DIR = Path("/logs")
 OUTPUT_DIR = Path("/output")
@@ -142,9 +143,26 @@ df = (
 
 logger.info("Data loaded")
 
+# Add column 'Churn_num'
 df = df.withColumn("Churn_num", F.when(F.col("Churn") == "Yes", 1).otherwise(0))
 
 logger.info("Column 'Churn_num' added")
+
+# Add column 'weight'
+size_df = df.count()
+
+class_counts = df.groupBy("Churn_num").count().collect()
+
+# weights scikit-learn :
+# w = nb_samples / (nb_classes * nk)
+#  where nk is the number of observations in the class k
+class_weights = {row["Churn_num"]: size_df / (2 * row["count"]) for row in class_counts}
+
+mapping_expr = F.create_map(*[F.lit(x) for pair in class_weights.items() for x in pair])
+
+df = df.withColumn("weight", mapping_expr[F.col("Churn_num")].cast(FloatType()))
+
+logger.info("Column 'weight' added")
 
 # ===
 # DataFrame analysis
@@ -157,7 +175,7 @@ log_section("First 5 lines:")
 logger.info(df_show_to_string(df, n=5))
 
 log_section("Dimensions:")
-size_df = df.count()
+# size_df = df.count()
 nb_columns = len(df.columns)
 logger.info(f"Total number of lines: {size_df}")
 logger.info(f"Total number of columns: {nb_columns}")
@@ -314,39 +332,50 @@ preprocessor = Pipeline(
 # Define Models
 # ===
 
+lr = LogisticRegression(
+    featuresCol="features_scaled",
+    labelCol="Churn_num",
+    predictionCol="prediction",
+)
+lr_balanced = LogisticRegression(
+    featuresCol="features_scaled",
+    labelCol="Churn_num",
+    predictionCol="prediction",
+    weightCol="weight",
+)
+rfc = RandomForestClassifier(
+    featuresCol="features_scaled",
+    labelCol="Churn_num",
+    predictionCol="prediction",
+    seed=42,
+)
+rfc_balanced = RandomForestClassifier(
+    featuresCol="features_scaled",
+    labelCol="Churn_num",
+    predictionCol="prediction",
+    weightCol="weight",
+    seed=42,
+)
+gbc = GBTClassifier(
+    featuresCol="features_scaled",
+    labelCol="Churn_num",
+    predictionCol="prediction",
+    seed=42,
+)
+gbc_balanced = GBTClassifier(
+    featuresCol="features_scaled",
+    labelCol="Churn_num",
+    predictionCol="prediction",
+    seed=42,
+)
+
 models = {
-    "RandomForestClassifier": Pipeline(
-        stages=preprocessor.getStages()
-        + [
-            RandomForestClassifier(
-                featuresCol="features_scaled",
-                labelCol="Churn_num",
-                predictionCol="prediction",
-                seed=42,
-            )
-        ]
-    ),
-    "LogisticRegression": Pipeline(
-        stages=preprocessor.getStages()
-        + [
-            LogisticRegression(
-                featuresCol="features_scaled",
-                labelCol="Churn_num",
-                predictionCol="prediction",
-            )
-        ]
-    ),
-    "GBTClassifier": Pipeline(
-        stages=preprocessor.getStages()
-        + [
-            GBTClassifier(
-                featuresCol="features_scaled",
-                labelCol="Churn_num",
-                predictionCol="prediction",
-                seed=42,
-            )
-        ]
-    ),
+    "lr": Pipeline(stages=preprocessor.getStages() + [lr]),
+    "lr_balanced": Pipeline(stages=preprocessor.getStages() + [lr]),
+    "rfc": Pipeline(stages=preprocessor.getStages() + [rfc]),
+    "rfc_balanced": Pipeline(stages=preprocessor.getStages() + [rfc_balanced]),
+    "gbc": Pipeline(stages=preprocessor.getStages() + [gbc]),
+    "gbc_balanced": Pipeline(stages=preprocessor.getStages() + [gbc_balanced]),
 }
 
 # ===
@@ -468,7 +497,7 @@ metrics_df = pd.DataFrame(metrics).sort_values("Recall Yes", ascending=False)
 logger.info("\n" + metrics_df.to_string(index=False))
 
 best_model_name = metrics_df.iloc[0]["Model"]
-logger.info(f"--> Best Model: {best_model_name}")
+logger.info(f"Best Model: {best_model_name}")
 
 best_model = fitted_models[best_model_name]
 
@@ -490,7 +519,7 @@ importances = clf_model.featureImportances.toArray()
 fi_pairs = sorted(zip(feature_names, importances), key=lambda x: -x[1])
 
 lines = []
-lines.append("Top 10 feature importance RandomForestClassifier:")
+lines.append(f"Top 10 feature importance {best_model_name}:")
 lines.append(f"{'Feature':<50} | {'Importance':<10} |")
 for fname, importance in fi_pairs[:10]:
     bar = "▮" * int(importance * 100)
@@ -507,7 +536,7 @@ best_model.write().overwrite().save(SAVE_MODEL_PATH.as_posix())
 logger.info(f"Model, path={SAVE_MODEL_PATH.as_posix()}")
 
 log_section("Save Spark results:")
-metrics_df.to_csv(MODEL_COMPARISONS_PATH.as_posix())
+metrics_df.to_csv(MODEL_COMPARISONS_PATH.as_posix(), index=False)
 logger.info(f"Model comparisons, path={MODEL_COMPARISONS_PATH.as_posix()}")
 
 
